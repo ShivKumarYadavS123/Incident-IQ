@@ -1,0 +1,137 @@
+[
+  {
+    "title": "Checkout API returning 500 errors",
+    "service": "payments-service",
+    "errorType": "ConnectionPoolExhausted",
+    "description": "Users reported checkout failing with generic 500 errors during a flash sale. Database connections were being held open longer than expected under high concurrent load, exhausting the connection pool.",
+    "rootCause": "Connection pool size was set too low for peak traffic; a slow query was also holding connections open longer than necessary.",
+    "resolution": "Increased pool size from 10 to 50 and added a query timeout of 3s to force-release stuck connections.",
+    "status": "resolved"
+  },
+  {
+    "title": "Third-party shipping API timeouts",
+    "service": "fulfillment-service",
+    "errorType": "UpstreamTimeout",
+    "description": "Order fulfillment jobs started failing silently. Logs showed repeated timeouts calling the external shipping rate API, but no alert had been configured for that dependency.",
+    "rootCause": "Shipping provider had an undocumented rate limit that was hit during a promotional traffic spike.",
+    "resolution": "Added exponential backoff and a circuit breaker around the shipping API client; added alerting on upstream latency.",
+    "status": "resolved"
+  },
+  {
+    "title": "Auth service login failures spike",
+    "service": "auth-service",
+    "errorType": "TokenValidationError",
+    "description": "A large number of users were unexpectedly logged out and could not log back in. Token validation was failing for tokens issued before a recent deploy.",
+    "rootCause": "A signing key rotation was deployed without a grace period, invalidating all previously issued tokens immediately.",
+    "resolution": "Rolled back key rotation, then re-deployed with dual-key validation supporting both old and new keys during a transition window.",
+    "status": "resolved"
+  },
+  {
+    "title": "Search results returning empty for valid queries",
+    "service": "search-service",
+    "errorType": "IndexSyncFailure",
+    "description": "Users searching for recently added products got zero results. The search index was found to be several hours out of sync with the product database.",
+    "rootCause": "The background indexing job had crashed silently two days prior due to an unhandled exception on a malformed product entry.",
+    "resolution": "Fixed the malformed-data edge case, restarted indexing, and added a dead-man's-switch alert if indexing hasn't run in 30 minutes.",
+    "status": "resolved"
+  },
+  {
+    "title": "Notification service sending duplicate emails",
+    "service": "notification-service",
+    "errorType": "DuplicateMessageDelivery",
+    "description": "Customers reported receiving the same order confirmation email 3-5 times within a minute. Message queue consumers appeared to be reprocessing the same messages.",
+    "rootCause": "Consumer acknowledgements were not being sent before a deploy restarted the pods, causing the queue to redeliver unacknowledged messages.",
+    "resolution": "Implemented idempotency keys on the email-send handler so duplicate deliveries are safely ignored.",
+    "status": "resolved"
+  },
+  {
+    "title": "API gateway rate limiting legitimate traffic",
+    "service": "api-gateway",
+    "errorType": "RateLimitExceeded",
+    "description": "Several enterprise customers reported random 429 errors during normal usage, well below their expected quota.",
+    "rootCause": "Rate limiting was keyed by IP address instead of API key, so customers behind shared corporate NATs were incorrectly bucketed together.",
+    "resolution": "Switched rate limiting to be keyed by API key/account ID instead of IP address.",
+    "status": "resolved"
+  },
+  {
+    "title": "Payments webhook events processed out of order",
+    "service": "payments-service",
+    "errorType": "EventOrderingIssue",
+    "description": "A refund was applied before the original charge had finished processing, leaving an account balance in an inconsistent state.",
+    "rootCause": "Webhook events were processed concurrently by multiple workers without any ordering guarantee per customer.",
+    "resolution": "Added per-customer sequential processing using a partition key so events for the same customer are always processed in order.",
+    "status": "resolved"
+  },
+  {
+    "title": "Image upload service running out of disk space",
+    "service": "media-service",
+    "errorType": "DiskSpaceExhausted",
+    "description": "User profile picture uploads started failing. The instance's local disk was found to be at 100% capacity.",
+    "rootCause": "Temporary upload files were not being cleaned up after processing due to a missing cleanup step in an error path.",
+    "resolution": "Added a cleanup step in the finally block and a scheduled job to purge stale temp files older than 1 hour.",
+    "status": "resolved"
+  },
+  {
+    "title": "Recommendation service returning stale results",
+    "service": "recommendation-service",
+    "errorType": "CacheInvalidationFailure",
+    "description": "Users continued to see recommendations based on old browsing behavior even after significant new activity.",
+    "rootCause": "The cache invalidation trigger was tied to a message queue topic that had been silently renamed during a refactor, so no invalidation events were arriving.",
+    "resolution": "Fixed the topic name mismatch and added a monitoring check comparing cache freshness against source data.",
+    "status": "resolved"
+  },
+  {
+    "title": "Database CPU spike causing site-wide slowness",
+    "service": "core-database",
+    "errorType": "HighCPUUtilization",
+    "description": "All services experienced elevated latency. Database CPU utilization was pegged at 100% for 40 minutes.",
+    "rootCause": "A newly deployed analytics query was missing an index and was performing a full table scan on every request.",
+    "resolution": "Added the missing index and moved the analytics query to a read replica instead of the primary database.",
+    "status": "resolved"
+  },
+  {
+    "title": "Inventory count going negative",
+    "service": "inventory-service",
+    "errorType": "RaceCondition",
+    "description": "Several products showed negative stock counts after a high-traffic sale event, allowing overselling.",
+    "rootCause": "Stock decrement was implemented as a read-then-write operation without locking, causing lost updates under concurrent purchases.",
+    "resolution": "Replaced with an atomic database decrement operation with a floor constraint at zero.",
+    "status": "resolved"
+  },
+  {
+    "title": "Session tokens expiring prematurely",
+    "service": "auth-service",
+    "errorType": "TokenValidationError",
+    "description": "Users on mobile were being logged out every few minutes despite normal activity, even though desktop sessions were fine.",
+    "rootCause": "Mobile clients were sending requests with a clock that had drifted, causing token expiry checks (which relied on client-reported time) to fail early.",
+    "resolution": "Switched token expiry validation to rely solely on server time instead of trusting client timestamps.",
+    "status": "resolved"
+  },
+  {
+    "title": "Background report generation jobs timing out",
+    "service": "reporting-service",
+    "errorType": "JobTimeout",
+    "description": "Monthly report generation for large enterprise accounts started failing to complete within the job timeout window.",
+    "rootCause": "Report size had grown with customer data volume over time, and the job's fixed timeout was never revisited.",
+    "resolution": "Made timeout configurable per account size and split large reports into paginated background chunks.",
+    "status": "resolved"
+  },
+  {
+    "title": "CDN serving outdated static assets",
+    "service": "frontend-cdn",
+    "errorType": "CacheStaleness",
+    "description": "Users reported seeing an old version of the website UI after a new deploy, even after hard refresh.",
+    "rootCause": "Cache-control headers on the build assets were set to a 24-hour TTL without cache-busting filenames per deploy.",
+    "resolution": "Added content-hash-based filenames to static assets so each deploy naturally invalidates the CDN cache.",
+    "status": "resolved"
+  },
+  {
+    "title": "Third-party payment provider outage",
+    "service": "payments-service",
+    "errorType": "UpstreamOutage",
+    "description": "All card payments began failing with generic gateway errors. Status page for the payment provider confirmed a full outage.",
+    "rootCause": "External dependency outage, not caused by our own systems, but no fallback provider was configured.",
+    "resolution": "Integrated a secondary payment provider as a fallback and added automatic failover logic when the primary returns elevated error rates.",
+    "status": "resolved"
+  }
+]
