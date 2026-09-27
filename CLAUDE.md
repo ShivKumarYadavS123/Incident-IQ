@@ -71,13 +71,19 @@ cd frontend && npm install && npm run dev
     `import "dotenv/config"` as the first line of `server.js` and `seed.js`
 18. Doc drift: README says Atlas (we use local), mentions a pre-filled sample form (it's empty), lists
     resolve flow as a stretch goal (it's built), has two "### 3." headings; model names hard-coded in 2 files (move to env)
+19. No Gemini resilience — seen live in testing: a Gemini 503 "high demand" made `/analyze` fail, the
+    frontend went black (#3) and the incident was lost (#4). Need: retry with exponential backoff on
+    429/503, a request timeout, graceful degradation (save the incident and return matches with
+    "hypothesis unavailable"), and map upstream outages to our own 503 via `httpError` (never pass
+    the SDK's status through — see errorHandler's `expose` rule)
 
 ## v2 roadmap
 - **2.0 Hardening:** error contract (asyncHandler/notFound/errorHandler, PATCH 404), res.ok handling +
   error boundary, strip embeddings, zod validation with per-field length limits (`express.json()`
   already caps bodies at 100kb), non-empty resolve fields, helmet, CORS allowlist, rate limits,
   single dotenv + env check on boot, `/health`, save-before-LLM (+ guard empty/mismatched vectors),
-  persist analysis, safe seed, SDK migration (+ store `embeddingModel`), models via env
+  persist analysis, safe seed, SDK migration (+ store `embeddingModel`), models via env,
+  Gemini resilience (retry/backoff on 429/503, timeout, degrade to matches-only, upstream outage -> 503)
 - **2.1 Retrieval quality:** filter-before-top-k + max-similarity confidence, fix recency, embed
   title/errorType too, embedding taskType, richer LLM context, dated seed data, eval script
   (precision@k, MRR), Atlas Vector Search with service prefilter
@@ -92,7 +98,9 @@ cd frontend && npm install && npm run dev
 
 ## Status
 - v1 committed (b5ae29e) and pushed to github.com/ShivKumarYadavS123/Incident-IQ
-- Next: v2.0, starting with issue #1
+- v2.0 in progress: #1 done (error contract: asyncHandler/notFound/errorHandler; only `expose: true`
+  errors keep their status, everything else -> generic 500). Baseline: `GET /api/incidents` = ~915 KB (embeddings)
+- Next: #3 frontend `res.ok` handling + error boundary, then Gemini resilience (#19)
 
 ## NOTE
 -"Never push or commit without asking me."
