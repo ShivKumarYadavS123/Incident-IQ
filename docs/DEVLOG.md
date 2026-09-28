@@ -114,3 +114,41 @@ this file holds the history and test results. **Any new AI chat/session: read `C
 
 **Finding:** `gemini-3.6-flash` is persistently overloaded for this key — a single hard-coded model is a
 single point of failure. Drives #19: model fallback list via env, retry/backoff, degrade to matches-only.
+
+Committed as `97d4788`.
+
+### What was built — #19 Gemini resilience
+- **`backend/scripts/list-models.mjs`**: lists models this key can use for `generateContent`
+  (REST ListModels, key sent as `x-goog-api-key` header — never in the URL, never printed).
+- **`backend/utils/gemini.js`**: one client + one retry policy.
+  - `withRetry`: 429/503 → retry same model, 3 attempts, backoff ~0.5s/~1s + jitter.
+    Timeout (15s)/network, 400, 404 → no retry (won't help).
+  - `generateHypothesis`: tries each model in `GEMINI_GEN_MODELS` in order; returns `null` if all fail.
+  - Env read at call time (not import time) — sidesteps the #17 dotenv ordering problem.
+- **Models via env**: `GEMINI_EMBED_MODEL` (default `gemini-embedding-001`, **no fallback** — vectors from
+  different models aren't comparable), `GEMINI_GEN_MODELS` (default `gemini-3.5-flash-lite,gemini-3.8-flash`).
+- **`/analyze`**: embedding outage (429/503/timeout/network) → our own `503 "AI service is temporarily
+  unavailable…"`; embedding 400 (bad key) stays 500. All gen models fail → incident **still saved**, matches
+  returned with `hypothesis: null, aiUnavailable: true`.
+- **`errorHandler`**: `expose` errors pass through for 4xx **or 503**. SDK errors never have `expose`, so
+  Google's own statuses still become a generic 500.
+- **UI**: `aiUnavailable` → "AI hypothesis temporarily unavailable — similar incidents below."
+
+### Verified by script (before manual testing)
+- Offline (fake errors): 503,503,ok → 3 calls ✅; 429 forever → gives up after 3 ✅; 400 → 1 call ✅;
+  outage classification: 503/timeout = outage, 400/TypeError = not ✅.
+- Live, 2026-09-28: `gemini-3.5-flash-lite` → 15s timeout; `gemini-3.8-flash` → 503 ×3 → `null` after 30.8s
+  (degrade path works for real). Embeddings fine. No key in any log line.
+- **Learned:** ListModels ≠ callable. `gemini-2.5-flash` is listed but returns 404 "no longer available to new
+  users" (fell through instantly, no retry — correct). `gemini-flash-lite-latest` also timed out.
+- **Trade-off:** worst case ≈ 15s per model (timeout) → with 2 models the user can wait ~30s before the
+  degraded answer. Future: overall deadline across models, honor `Retry-After`, stream progress (2.3).
+
+### Manual test checklist — #19
+| # | Test | Result |
+|---|---|---|
+| F1 | Gemini gen down (current reality): trigger alert → matches + "AI hypothesis temporarily unavailable", incident saved in feed | ✅ |
+| F2 | Gemini gen up: trigger alert → real hypothesis (retest E1 happy path + resolve) | ⏳ blocked — Gemini still overloaded; retest when it recovers |
+| F3 | Bad model name first in `GEMINI_GEN_MODELS` → falls through to next (404, no retry) | ✅ |
+| F4 | `GEMINI_API_KEY=invalid` → still 500 "Internal server error" (misconfig ≠ outage) | ✅ |
+| F5 | Embedding outage (turn Wi-Fi off; local Mongo still works) → UI shows "AI service is temporarily unavailable…" (our 503) | ✅ |

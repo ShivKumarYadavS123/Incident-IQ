@@ -145,7 +145,7 @@ function EmptyState() {
 export default function IncidentDetail({ result, onResolved }) {
   if (!result) return <EmptyState />;
 
-  const { incident, matches, hypothesis, confidence } = result;
+  const { incident, matches, hypothesis, aiUnavailable, confidence } = result;
 
   return (
     <div className="h-full overflow-y-auto px-6 py-6 max-w-3xl mx-auto w-full">
@@ -170,7 +170,14 @@ export default function IncidentDetail({ result, onResolved }) {
           <span className="w-1 h-1 rounded-full bg-console-amber" />
           AI Hypothesis
         </p>
-        <p className="text-sm text-console-text leading-relaxed whitespace-pre-wrap">{hypothesis}</p>
+        {aiUnavailable ? (
+          // Every Gemini model failed; the backend still saved the incident and retrieved matches
+          <p role="status" className="text-sm text-console-amber">
+            AI hypothesis temporarily unavailable — similar incidents below.
+          </p>
+        ) : (
+          <p className="text-sm text-console-text leading-relaxed whitespace-pre-wrap">{hypothesis}</p>
+        )}
       </div>
 
       <div>

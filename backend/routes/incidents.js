@@ -1,13 +1,12 @@
 import dotenv from "dotenv";
 dotenv.config();
 import express from "express";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import Incident from "../models/Incident.js";
 import { getEmbedding, rankIncidents } from "../utils/embed.js";
+import { generateHypothesis, isUpstreamOutage } from "../utils/gemini.js";
 import { asyncHandler, httpError } from "../middleware/errors.js";
 
 const router = express.Router();
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // GET all incidents (for the alert feed list on the left panel)
 router.get("/", asyncHandler(async (req, res) => {
@@ -21,8 +20,17 @@ router.get("/", asyncHandler(async (req, res) => {
 router.post("/analyze", asyncHandler(async (req, res) => {
   const { title, service, errorType, description, stackTrace } = req.body;
 
-  // 1. Embed the new incident's description
-  const newEmbedding = await getEmbedding(description);
+  // 1. Embed the new incident's description. Without a vector we can't
+  // retrieve or save anything useful, so an outage here fails the request —
+  // as our own 503, never Google's status passed through.
+  let newEmbedding;
+  try {
+    newEmbedding = await getEmbedding(description);
+  } catch (err) {
+    if (!isUpstreamOutage(err)) throw err; // e.g. invalid key: our bug -> 500
+    console.warn("[analyze] embedding unavailable:", err.message);
+    throw httpError(503, "AI service is temporarily unavailable — please try again shortly");
+  }
 
   // 2. Retrieve past incidents to compare against
   const pastIncidents = await Incident.find({ status: "resolved" });
@@ -33,6 +41,7 @@ router.post("/analyze", asyncHandler(async (req, res) => {
 
   let hypothesis = "No sufficiently similar past incident found. This may be a new failure mode — escalate to a human on-call engineer.";
   let confidence = "low";
+  let aiUnavailable = false;
 
   if (topMatches.length > 0) {
     confidence = topMatches[0].similarity > 0.8 ? "high" : topMatches[0].similarity > 0.65 ? "medium" : "low";
@@ -50,8 +59,6 @@ Resolution: ${m.incident.resolution}`
       )
       .join("\n\n");
 
-    const model = genAI.getGenerativeModel({ model: "gemini-3.6-flash" });
-
     const prompt = `You are an on-call engineering assistant. Given a new incident and similar past incidents, draft a short, specific root-cause hypothesis. ONLY use information from the provided past incidents — cite which past incident # you're drawing from. If the past incidents don't clearly explain the new one, say so honestly instead of guessing.
 
 New incident:
@@ -66,8 +73,10 @@ ${context}
 
 Draft a root-cause hypothesis for the new incident, citing which past incident(s) support it.`;
 
-    const genResult = await model.generateContent(prompt);
-    hypothesis = genResult.response.text();
+    // Tries each model in GEMINI_GEN_MODELS with retries; null = all failed.
+    // Degrade instead of failing: the retrieved matches are still useful.
+    hypothesis = await generateHypothesis(prompt);
+    aiUnavailable = hypothesis === null;
   }
 
   // 5. Save the new incident (as "open" — not yet resolved)
@@ -88,6 +97,7 @@ Draft a root-cause hypothesis for the new incident, citing which past incident(s
       createdAt: m.incident.createdAt
     })),
     hypothesis,
+    aiUnavailable,
     confidence
   });
 }));

@@ -16,7 +16,9 @@ into future retrieval.
 - Frontend: React 18 + Vite 5 + Tailwind 3 (`frontend/`), dev server :5173, proxies `/api` -> :5000
 - Backend: Node (ESM) + Express 4 + Mongoose 8 (`backend/`), port 5000
 - DB: MongoDB (local for now; Atlas planned)
-- AI: `@google/generative-ai` — `gemini-embedding-001` (embeddings), `gemini-3.6-flash` (hypothesis)
+- AI: `@google/generative-ai` via `backend/utils/gemini.js` — models from env: `GEMINI_EMBED_MODEL`
+  (`gemini-embedding-001`), `GEMINI_GEN_MODELS` (ordered fallback list). `node scripts/list-models.mjs`
+  lists what the key can use (listed ≠ callable: some return 404)
 
 ## Commands
 ```bash
@@ -102,7 +104,9 @@ cd frontend && npm install && npm run dev
   errors keep their status, everything else -> generic 500). Baseline: `GET /api/incidents` = ~915 KB (embeddings)
 - #3 done: `frontend/src/api.js` `request()` (res.ok + network/proxy-down → "Can't reach the server"),
   inline errors, `ErrorBoundary` around App and IncidentDetail
-- Next: Gemini resilience (#19)
+- #19 done (F2 happy path pending until Gemini recovers): retry/backoff on 429/503, 15s timeout, model fallback list,
+  all-fail -> incident saved + `aiUnavailable: true`; embedding outage -> our own 503 (errorHandler exposes 4xx + 503)
+- Next: #4 save-before-LLM (embedding failure still loses the incident), #5 persist analysis, #13 confidence
 
 ## NOTE
 -"Never push or commit without asking me."

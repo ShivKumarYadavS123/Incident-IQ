@@ -1,15 +1,13 @@
 import dotenv from "dotenv";
 dotenv.config();
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+import { withRetry, embedModelName } from "./gemini.js";
 
 // Turns text into a vector (list of numbers) that captures its *meaning*.
 // Two similar-meaning incidents will produce vectors that are close together.
-// Uses Gemini's free embedding model.
+// Retries on 429/503 but never falls back to another model: vectors from
+// different models aren't comparable, so a fallback would corrupt retrieval.
 export async function getEmbedding(text) {
-  const model = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
-  const result = await model.embedContent(text);
+  const result = await withRetry(embedModelName(), (model) => model.embedContent(text));
   return result.embedding.values;
 }
 
