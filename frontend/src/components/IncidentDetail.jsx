@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { request } from "../api.js";
 
 // The signature visual element: a "signal match" bar per retrieved incident.
 // Higher similarity = more bars lit, evoking a waveform/signal-strength meter —
@@ -46,17 +47,21 @@ function ResolveForm({ incidentId, onResolved }) {
   const [resolution, setResolution] = useState("");
   const [saving, setSaving] = useState(false);
   const [open, setOpen] = useState(false);
+  const [error, setError] = useState(null);
 
   async function submit(e) {
     e.preventDefault();
     setSaving(true);
+    setError(null);
     try {
-      await fetch(`/api/incidents/${incidentId}/resolve`, {
+      await request(`/api/incidents/${incidentId}/resolve`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rootCause, resolution })
       });
-      onResolved();
+      onResolved(); // only on success — otherwise the UI would claim a fix that was never saved
+    } catch (err) {
+      setError(err.message);
     } finally {
       setSaving(false);
     }
@@ -114,6 +119,11 @@ function ResolveForm({ incidentId, onResolved }) {
           Cancel
         </button>
       </div>
+      {error && (
+        <p role="alert" className="text-xs text-red-400">
+          {error}
+        </p>
+      )}
     </form>
   );
 }

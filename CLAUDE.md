@@ -100,7 +100,9 @@ cd frontend && npm install && npm run dev
 - v1 committed (b5ae29e) and pushed to github.com/ShivKumarYadavS123/Incident-IQ
 - v2.0 in progress: #1 done (error contract: asyncHandler/notFound/errorHandler; only `expose: true`
   errors keep their status, everything else -> generic 500). Baseline: `GET /api/incidents` = ~915 KB (embeddings)
-- Next: #3 frontend `res.ok` handling + error boundary, then Gemini resilience (#19)
+- #3 done: `frontend/src/api.js` `request()` (res.ok + network/proxy-down → "Can't reach the server"),
+  inline errors, `ErrorBoundary` around App and IncidentDetail
+- Next: Gemini resilience (#19)
 
 ## NOTE
 -"Never push or commit without asking me."

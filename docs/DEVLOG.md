@@ -74,3 +74,43 @@ this file holds the history and test results. **Any new AI chat/session: read `C
 3. Rest of 2.0: #4 save-before-LLM, #5 persist analysis, #13 confidence, #2 strip embeddings, zod validation,
    resolve validation, safe seed, single dotenv + exit on boot failure, helmet/CORS/rate limit.
 4. When 2.0 is complete: `git tag v2.0.0` and push the tag (GitHub release).
+
+---
+
+## Day 2 — 2026-09-28
+
+### What was built — #3 frontend error handling
+- **`frontend/src/api.js` → `request(url, options)`**: single fetch wrapper. Returns parsed JSON on success,
+  otherwise throws an Error whose message is safe to show:
+  - `fetch` throws (network down) → "Can't reach the server — is the backend running?"
+  - `!res.ok` + JSON `{ error }` → the backend's message (our error contract)
+  - `!res.ok` + non-JSON body → also "Can't reach the server". Our backend always answers errors as JSON,
+    so a non-JSON error came from something in between — in dev, the **Vite proxy returns a 5xx when the
+    backend is down**, so `fetch` does *not* throw in that case.
+  - `res.ok` + non-JSON → "Unexpected response from server" (never return `null` into state)
+- **`App.jsx`**: `loadIncidents` never throws — keeps the last list and shows a sidebar banner with Retry.
+  `triggerAlert` shows the error next to the button and keeps the form open with the user's input;
+  `setResult` only ever receives real analysis data (the direct cause of the C11 black screen).
+- **`ResolveForm`**: `onResolved()` only on success. Before, a failed PATCH still flipped the UI to
+  "resolved" — the engineer thought the fix was fed back into RAG when it wasn't.
+- **`ErrorBoundary.jsx`** (class component — no hook equivalent): wraps `<App />` (full-page fallback + Reload)
+  and `<IncidentDetail>` (panel-only fallback; `key={incident._id}` remounts it so selecting another incident clears the error).
+
+### Learned
+- Error boundaries only catch errors **during render**. Not event handlers, not async code. The C11
+  black screen started in an async fetch (bad data → later render crash), so the real fix is checking
+  `res.ok`; the boundary is a safety net.
+- `errorHandler` only exposes 4xx. For #19 ("outage → our own 503 via `httpError`") it must also allow 503.
+
+### Manual test checklist — #3
+| # | Test | Result |
+|---|---|---|
+| E1 | Normal flow: trigger alert, resolve it | ⚠️ Error path ✅: real Gemini 503 on every try (`gemini-3.6-flash` generateContent "high demand"; embeddings fine) → clean "Internal server error", no black screen. Happy path not verifiable → retest after #19 |
+| E2 | Backend stopped, reload page → sidebar banner; Retry after restart | ✅ |
+| E3 | Backend stopped, trigger alert → "Can't reach the server", form keeps input | ✅ |
+| E4 | Backend stopped, resolve → inline error, incident stays open | ✅ |
+| E5 | `GEMINI_API_KEY=invalid` → "Internal server error" by the button, no black screen | ✅ |
+| E6 | Forced render error → panel fallback, sidebar still works | ✅ |
+
+**Finding:** `gemini-3.6-flash` is persistently overloaded for this key — a single hard-coded model is a
+single point of failure. Drives #19: model fallback list via env, retry/backoff, degrade to matches-only.

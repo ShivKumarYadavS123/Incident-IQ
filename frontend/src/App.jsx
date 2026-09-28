@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import AlertFeed from "./components/AlertFeed.jsx";
 import IncidentDetail from "./components/IncidentDetail.jsx";
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
+import { request } from "./api.js";
 
 const EMPTY_FORM = {
   title: "",
@@ -25,11 +27,17 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [formOpen, setFormOpen] = useState(true); // collapses after a successful trigger
+  const [feedError, setFeedError] = useState(null);
+  const [alertError, setAlertError] = useState(null);
 
+  // Never throws: on failure keep the last list we had and show a banner
   async function loadIncidents() {
-    const res = await fetch("/api/incidents");
-    const data = await res.json();
-    setIncidents(data);
+    try {
+      setIncidents(await request("/api/incidents"));
+      setFeedError(null);
+    } catch (err) {
+      setFeedError(err.message);
+    }
   }
 
   useEffect(() => {
@@ -39,17 +47,20 @@ export default function App() {
   async function triggerAlert(e) {
     e.preventDefault();
     setLoading(true);
+    setAlertError(null);
     try {
-      const res = await fetch("/api/incidents/analyze", {
+      const data = await request("/api/incidents/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form)
       });
-      const data = await res.json();
       setResult(data);
       await loadIncidents();
       setForm(EMPTY_FORM);
       setFormOpen(false); // job's done — collapse to give the analysis room to breathe
+    } catch (err) {
+      // Keep the form open with the user's input so they can retry
+      setAlertError(err.message);
     } finally {
       setLoading(false);
     }
@@ -82,23 +93,36 @@ export default function App() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        <aside className="w-72 border-r border-console-border shrink-0">
-          <AlertFeed
-            incidents={incidents}
-            selectedId={result?.incident?._id}
-            onSelect={(inc) => {
-              setFormOpen(false);
-              setResult({
-                incident: inc,
-                matches: [],
-                hypothesis:
-                  inc.status === "resolved"
-                    ? `Resolved.\n\nRoot cause: ${inc.rootCause}\nResolution: ${inc.resolution}`
-                    : "This incident hasn't been analyzed with the current session — trigger a fresh alert to see full retrieval + hypothesis.",
-                confidence: "low"
-              });
-            }}
-          />
+        <aside className="w-72 border-r border-console-border shrink-0 flex flex-col">
+          {feedError && (
+            <div role="alert" className="px-4 py-3 border-b border-console-border bg-red-400/10 shrink-0">
+              <p className="text-xs text-red-400">{feedError}</p>
+              <button
+                onClick={loadIncidents}
+                className="font-mono text-[10px] uppercase tracking-wider text-console-text mt-1 hover:text-console-amber"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+          <div className="flex-1 min-h-0">
+            <AlertFeed
+              incidents={incidents}
+              selectedId={result?.incident?._id}
+              onSelect={(inc) => {
+                setFormOpen(false);
+                setResult({
+                  incident: inc,
+                  matches: [],
+                  hypothesis:
+                    inc.status === "resolved"
+                      ? `Resolved.\n\nRoot cause: ${inc.rootCause}\nResolution: ${inc.resolution}`
+                      : "This incident hasn't been analyzed with the current session — trigger a fresh alert to see full retrieval + hypothesis.",
+                  confidence: "low"
+                });
+              }}
+            />
+          </div>
         </aside>
 
         <main className="flex-1 flex flex-col overflow-hidden">
@@ -194,18 +218,35 @@ export default function App() {
                 />
               </div>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="bg-console-amber text-console-bg font-mono text-xs uppercase tracking-wider px-5 py-2.5 rounded font-semibold disabled:opacity-50 hover:shadow-[0_0_16px_-2px_rgba(255,176,32,0.5)] transition-shadow"
-              >
-                {loading ? "Analyzing…" : "Trigger Alert"}
-              </button>
+              <div className="flex items-center gap-4">
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="bg-console-amber text-console-bg font-mono text-xs uppercase tracking-wider px-5 py-2.5 rounded font-semibold disabled:opacity-50 hover:shadow-[0_0_16px_-2px_rgba(255,176,32,0.5)] transition-shadow"
+                >
+                  {loading ? "Analyzing…" : "Trigger Alert"}
+                </button>
+                {alertError && (
+                  <p role="alert" className="text-xs text-red-400">
+                    {alertError}
+                  </p>
+                )}
+              </div>
             </form>
           </div>
 
           <div className="flex-1 overflow-hidden">
-            <IncidentDetail result={result} onResolved={handleResolved} />
+            {/* key: selecting another incident remounts the boundary, clearing a caught error */}
+            <ErrorBoundary
+              key={result?.incident?._id}
+              fallback={
+                <p role="alert" className="px-6 py-6 text-sm text-red-400">
+                  Couldn't display this incident. Select another one or trigger a new alert.
+                </p>
+              }
+            >
+              <IncidentDetail result={result} onResolved={handleResolved} />
+            </ErrorBoundary>
           </div>
         </main>
       </div>
