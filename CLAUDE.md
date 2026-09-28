@@ -54,7 +54,9 @@ cd frontend && npm install && npm run dev
 5. Analysis (matches/hypothesis) not persisted — past open incidents can't show it
 6. Recency: half-life is ~125d not 180, it's additive (unrelated-but-recent gets +0.15), seed has no dates.
    Bigger bug: top-5 is cut by *blended* score *before* the similarity > 0.55 filter, and confidence
-   uses `topMatches[0].similarity` (best blended, not most similar). Filter first; confidence = max similarity
+   uses `topMatches[0].similarity` (best blended, not most similar). Filter first; confidence = max similarity.
+   Seen in testing: matches display in blended order (less similar above more similar), and nonsense
+   text matched at 56–60% — the 0.55 cutoff is too low; calibrate it with the eval script (2.1)
 7. Only `description` is embedded (not title/errorType)
 8. No input validation, auth, rate limiting, helmet, CORS allowlist; `err.message` leaked in 500s; prompt injection unhandled
 9. Legacy Gemini SDK — evaluate migrating to `@google/genai`
@@ -79,6 +81,10 @@ cd frontend && npm install && npm run dev
     429/503, a request timeout, graceful degradation (save the incident and return matches with
     "hypothesis unavailable"), and map upstream outages to our own 503 via `httpError` (never pass
     the SDK's status through — see errorHandler's `expose` rule)
+20. No way to re-run analysis. Incidents with a failed (`aiUnavailable`), missing (embedding was down) or
+    pre-#4 analysis stay that way forever. Need `POST /:id/analyze` (embed if no vector, rank, hypothesize,
+    overwrite `analysis`) + a "Retry AI analysis" button in IncidentDetail. Must **exclude the incident
+    itself** from matches (once it has a vector and is resolved it would match itself at ~100%)
 
 ## v2 roadmap
 - **2.0 Hardening:** error contract (asyncHandler/notFound/errorHandler, PATCH 404), res.ok handling +
@@ -86,8 +92,10 @@ cd frontend && npm install && npm run dev
   already caps bodies at 100kb), non-empty resolve fields, helmet, CORS allowlist, rate limits,
   single dotenv + env check on boot, `/health`, save-before-LLM (+ guard empty/mismatched vectors),
   persist analysis, safe seed, SDK migration (+ store `embeddingModel`), models via env,
-  Gemini resilience (retry/backoff on 429/503, timeout, degrade to matches-only, upstream outage -> 503)
-- **2.1 Retrieval quality:** filter-before-top-k + max-similarity confidence, fix recency, embed
+  Gemini resilience (retry/backoff on 429/503, timeout, degrade to matches-only, upstream outage -> 503),
+  re-run analysis endpoint + "Retry AI analysis" button (#20)
+- **2.1 Retrieval quality:** filter-before-top-k + max-similarity confidence, raise/calibrate the 0.55
+  similarity cutoff (nonsense matched at 56–60%), fix recency, embed
   title/errorType too, embedding taskType, richer LLM context, dated seed data, eval script
   (precision@k, MRR), Atlas Vector Search with service prefilter
 - **2.2 Auth:** users with `admin` / `engineer` roles, protected routes (e.g. only engineers+ resolve,
@@ -105,11 +113,11 @@ cd frontend && npm install && npm run dev
   errors keep their status, everything else -> generic 500). Baseline: `GET /api/incidents` = ~915 KB (embeddings)
 - #3 done: `frontend/src/api.js` `request()` (res.ok + network/proxy-down → "Can't reach the server"),
   inline errors, `ErrorBoundary` around App and IncidentDetail
-- #19 done (F2 happy path pending until Gemini recovers): retry/backoff on 429/503, 15s timeout, model fallback list,
+- #19 done (F1–F5 passed): retry/backoff on 429/503, 15s timeout, model fallback list,
   all-fail -> incident saved + `aiUnavailable: true`; embedding outage -> our own 503 (errorHandler exposes 4xx + 503)
 - #4/#5 done (G1–G6 passed): save before any AI call, `analysis` subdoc persisted
   (snapshot matches), `POST /analyze` returns 201 + incident; #13 fixed; #16 length guard in rankIncidents
-- Next: #2 strip embeddings, zod validation (A5), `POST /:id/analyze` re-run for unanalyzed incidents
+- Next: #2 strip embeddings (developer is doing this one themselves), then zod validation (A5), #20 re-run analysis
 
 ## NOTE
 -"Never push or commit without asking me."

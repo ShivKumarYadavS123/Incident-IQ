@@ -148,7 +148,7 @@ Committed as `97d4788`.
 | # | Test | Result |
 |---|---|---|
 | F1 | Gemini gen down (current reality): trigger alert → matches + "AI hypothesis temporarily unavailable", incident saved in feed | ✅ |
-| F2 | Gemini gen up: trigger alert → real hypothesis (retest E1 happy path + resolve) | ⏳ blocked — Gemini still overloaded; retest when it recovers |
+| F2 | Gemini gen up: trigger alert → real hypothesis (retest E1 happy path + resolve) | ✅ 2026-09-29 02:00 — "Network test 2" got a real Gemini hypothesis (also closes E1 happy path) |
 | F3 | Bad model name first in `GEMINI_GEN_MODELS` → falls through to next (404, no retry) | ✅ |
 | F4 | `GEMINI_API_KEY=invalid` → still 500 "Internal server error" (misconfig ≠ outage) | ✅ |
 | F5 | Embedding outage (turn Wi-Fi off; local Mongo still works) → UI shows "AI service is temporarily unavailable…" (our 503) | ✅ |
@@ -179,8 +179,15 @@ Committed as `8c9eb92`.
   bad `confidence` rejected ✅; rank with `[1,0,0]` vs `[1,0,0]`, `[]`, `[1,0]` → 1 result, similarity 1 ✅. Frontend builds ✅.
 
 ### Known gaps (follow-ups)
-- An incident saved during an embedding outage is never analyzed later → add `POST /:id/analyze` (re-run).
+- An incident saved during an embedding outage is never analyzed later → **#20** `POST /:id/analyze` (re-run).
 - Missing required field is now a Mongoose `ValidationError` → still generic 500 (A5) → zod → 400.
+
+### Findings (manual testing)
+- **Retrieval cutoff too low:** nonsense test text matched past incidents at **56–60%** similarity — just
+  over the 0.55 floor. `gemini-embedding-001` cosine scores for unrelated text sit higher than intuition
+  suggests, so 0.55 lets noise through. → 2.1: calibrate the cutoff with the eval script, don't guess.
+- **#6 visible in the UI:** matches are displayed in *blended*-score order (similarity + service + recency),
+  so a less similar match can appear above a more similar one. → 2.1: filter first, then rank.
 
 ### Manual test checklist — #4/#5
 | # | Test | Result |
