@@ -54,12 +54,12 @@ function ResolveForm({ incidentId, onResolved }) {
     setSaving(true);
     setError(null);
     try {
-      await request(`/api/incidents/${incidentId}/resolve`, {
+      const updated = await request(`/api/incidents/${incidentId}/resolve`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rootCause, resolution })
       });
-      onResolved(); // only on success — otherwise the UI would claim a fix that was never saved
+      onResolved(updated); // only on success — otherwise the UI would claim a fix that was never saved
     } catch (err) {
       setError(err.message);
     } finally {
@@ -145,7 +145,8 @@ function EmptyState() {
 export default function IncidentDetail({ result, onResolved }) {
   if (!result) return <EmptyState />;
 
-  const { incident, matches, hypothesis, aiUnavailable, confidence } = result;
+  const { incident, analyzed, matches, hypothesis, aiUnavailable, confidence } = result;
+  const isResolved = incident.status === "resolved";
 
   return (
     <div className="h-full overflow-y-auto px-6 py-6 max-w-3xl mx-auto w-full">
@@ -155,8 +156,8 @@ export default function IncidentDetail({ result, onResolved }) {
             {incident.service}
           </p>
           <div className="flex items-center gap-2">
-            <ConfidenceBadge confidence={confidence} />
-            {incident.status === "open" && (
+            {confidence && <ConfidenceBadge confidence={confidence} />}
+            {!isResolved && (
               <ResolveForm incidentId={incident._id} onResolved={onResolved} />
             )}
           </div>
@@ -165,12 +166,30 @@ export default function IncidentDetail({ result, onResolved }) {
         <p className="text-sm text-console-muted mt-2 leading-relaxed">{incident.description}</p>
       </div>
 
+      {/* The real fix, shown above the AI's guess so the two can be compared */}
+      {isResolved && (
+        <div className="mb-6 rounded-xl border border-console-teal/30 bg-console-teal/5 p-5">
+          <p className="font-mono text-[10px] tracking-[0.2em] text-console-teal uppercase mb-2">Resolution</p>
+          <p className="text-sm text-console-text">
+            <span className="text-console-muted">Root cause: </span>
+            {incident.rootCause}
+          </p>
+          <p className="text-sm text-console-text mt-1">
+            <span className="text-console-muted">Fix: </span>
+            {incident.resolution}
+          </p>
+        </div>
+      )}
+
       <div className="mb-6 rounded-xl border border-console-border bg-gradient-to-br from-console-panel to-console-panel/60 p-5">
         <p className="font-mono text-[10px] tracking-[0.2em] text-console-amber uppercase mb-2 flex items-center gap-2">
           <span className="w-1 h-1 rounded-full bg-console-amber" />
           AI Hypothesis
         </p>
-        {aiUnavailable ? (
+        {!analyzed ? (
+          // Seed/v1 data, or embedding was down when the alert fired
+          <p className="text-sm text-console-muted">No AI analysis on record for this incident.</p>
+        ) : aiUnavailable ? (
           // Every Gemini model failed; the backend still saved the incident and retrieved matches
           <p role="status" className="text-sm text-console-amber">
             AI hypothesis temporarily unavailable — similar incidents below.
@@ -180,36 +199,38 @@ export default function IncidentDetail({ result, onResolved }) {
         )}
       </div>
 
-      <div>
-        <p className="font-mono text-[10px] tracking-[0.2em] text-console-muted uppercase mb-3">
-          Similar Past Incidents ({matches.length})
-        </p>
-        <div className="space-y-2.5">
-          {matches.map((m, i) => (
-            <div
-              key={i}
-              className="rounded-lg border border-console-border bg-console-panel p-4 flex items-center justify-between gap-4 hover:border-console-teal/30 transition-colors"
-            >
-              <div className="flex-1 min-w-0">
-                <p className="text-sm text-console-text">{m.title}</p>
-                <p className="font-mono text-[10px] text-console-muted mt-1">
-                  {m.service} · {new Date(m.createdAt).toLocaleDateString()}
-                </p>
-                <p className="text-xs text-console-muted mt-2">{m.resolution}</p>
+      {analyzed && (
+        <div>
+          <p className="font-mono text-[10px] tracking-[0.2em] text-console-muted uppercase mb-3">
+            Similar Past Incidents ({matches.length})
+          </p>
+          <div className="space-y-2.5">
+            {matches.map((m, i) => (
+              <div
+                key={i}
+                className="rounded-lg border border-console-border bg-console-panel p-4 flex items-center justify-between gap-4 hover:border-console-teal/30 transition-colors"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-console-text">{m.title}</p>
+                  <p className="font-mono text-[10px] text-console-muted mt-1">
+                    {m.service} · {new Date(m.createdAt).toLocaleDateString()}
+                  </p>
+                  <p className="text-xs text-console-muted mt-2">{m.resolution}</p>
+                </div>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <MatchSignal similarity={m.similarity} />
+                  <span className="font-mono text-[10px] text-console-muted">
+                    {(m.similarity * 100).toFixed(0)}%
+                  </span>
+                </div>
               </div>
-              <div className="flex flex-col items-end gap-1 shrink-0">
-                <MatchSignal similarity={m.similarity} />
-                <span className="font-mono text-[10px] text-console-muted">
-                  {(m.similarity * 100).toFixed(0)}%
-                </span>
-              </div>
-            </div>
-          ))}
-          {matches.length === 0 && (
-            <p className="text-sm text-console-muted font-mono">No matches above confidence threshold.</p>
-          )}
+            ))}
+            {matches.length === 0 && (
+              <p className="text-sm text-console-muted font-mono">No matches above confidence threshold.</p>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

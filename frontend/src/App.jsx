@@ -12,6 +12,20 @@ const EMPTY_FORM = {
   stackTrace: ""
 };
 
+// The detail view's shape, built from an incident and its persisted analysis.
+// Same path for a fresh alert, a feed click and a resolve — no fabricated data.
+function resultFromIncident(inc) {
+  const a = inc.analysis;
+  return {
+    incident: inc,
+    analyzed: Boolean(a),
+    matches: a?.matches ?? [],
+    hypothesis: a?.hypothesis ?? null,
+    aiUnavailable: a?.aiUnavailable ?? false,
+    confidence: a?.confidence ?? null
+  };
+}
+
 function StatChip({ label, value, accent }) {
   return (
     <div className="flex items-baseline gap-1.5">
@@ -54,20 +68,22 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form)
       });
-      setResult(data);
+      setResult(resultFromIncident(data));
       await loadIncidents();
       setForm(EMPTY_FORM);
       setFormOpen(false); // job's done — collapse to give the analysis room to breathe
     } catch (err) {
       // Keep the form open with the user's input so they can retry
       setAlertError(err.message);
+      // The backend saves before any AI call, so it may exist despite the error
+      await loadIncidents();
     } finally {
       setLoading(false);
     }
   }
 
-  async function handleResolved() {
-    setResult((prev) => prev && { ...prev, incident: { ...prev.incident, status: "resolved" } });
+  async function handleResolved(updated) {
+    setResult(resultFromIncident(updated));
     await loadIncidents();
   }
 
@@ -111,15 +127,7 @@ export default function App() {
               selectedId={result?.incident?._id}
               onSelect={(inc) => {
                 setFormOpen(false);
-                setResult({
-                  incident: inc,
-                  matches: [],
-                  hypothesis:
-                    inc.status === "resolved"
-                      ? `Resolved.\n\nRoot cause: ${inc.rootCause}\nResolution: ${inc.resolution}`
-                      : "This incident hasn't been analyzed with the current session — trigger a fresh alert to see full retrieval + hypothesis.",
-                  confidence: "low"
-                });
+                setResult(resultFromIncident(inc));
               }}
             />
           </div>

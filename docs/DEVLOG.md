@@ -152,3 +152,42 @@ Committed as `97d4788`.
 | F3 | Bad model name first in `GEMINI_GEN_MODELS` → falls through to next (404, no retry) | ✅ |
 | F4 | `GEMINI_API_KEY=invalid` → still 500 "Internal server error" (misconfig ≠ outage) | ✅ |
 | F5 | Embedding outage (turn Wi-Fi off; local Mongo still works) → UI shows "AI service is temporarily unavailable…" (our 503) | ✅ |
+
+Committed as `8c9eb92`.
+
+---
+
+## Day 3 — 2026-09-29
+
+### What was built — #4 save-before-AI + #5 persist analysis (+ #13, #16 guard)
+- **`/analyze` order:** `Incident.create` (open, no vector) → embed → save vector → rank → hypothesis →
+  save `analysis` → `201` + the incident. No AI failure can lose an alert; bad input fails before any AI cost.
+- **Embedding outage** → still our 503, message now "Incident saved, but AI analysis is unavailable…"
+  (tells the engineer not to resubmit → no duplicate).
+- **Schema `analysis`** `{ matches[], hypothesis, confidence, aiUnavailable, analyzedAt }`, no default:
+  absent = never analyzed (seed/v1, or embedding down) ≠ analyzed-with-no-matches.
+  Matches are **snapshots** (+ `incidentId`), not refs: a record of what the engineer saw at that time.
+- **#16 guard:** `rankIncidents` skips vectors whose length ≠ the new one (empty = saved during outage,
+  or another model). Needed now: an unembedded incident can be resolved and enter retrieval → `NaN` sort.
+- **Frontend:** `resultFromIncident(inc)` builds the detail view for new alert, feed click and resolve alike.
+  No more fabricated `matches: []` / `confidence: "low"` → **#13 fixed** (badge only when there's a confidence).
+  Resolved incidents show a **Resolution** card above the AI hypothesis (real fix vs. AI guess).
+  Unanalyzed incidents: "No AI analysis on record", matches section hidden. Failed trigger refreshes the feed.
+
+### Verified by script
+- Never-analyzed doc has no `analysis` key ✅; degraded analysis (`hypothesis: null`) validates ✅;
+  bad `confidence` rejected ✅; rank with `[1,0,0]` vs `[1,0,0]`, `[]`, `[1,0]` → 1 result, similarity 1 ✅. Frontend builds ✅.
+
+### Known gaps (follow-ups)
+- An incident saved during an embedding outage is never analyzed later → add `POST /:id/analyze` (re-run).
+- Missing required field is now a Mongoose `ValidationError` → still generic 500 (A5) → zod → 400.
+
+### Manual test checklist — #4/#5
+| # | Test | Result |
+|---|---|---|
+| G1 | Trigger alert → click another incident, click back, reload page → same matches/hypothesis (or AI-unavailable note) | ✅ |
+| G2 | Wi-Fi off, trigger → "Incident saved, but AI analysis is unavailable…"; incident appears in feed; shows "No AI analysis on record", no badge | ✅ |
+| G3 | Wi-Fi on, resolve the G2 incident, trigger a similar alert → works, no crash (unembedded incident skipped) | ✅ |
+| G4 | Click a resolved seed incident → Resolution card, no "LOW CONFIDENCE" badge (#13) | ✅ |
+| G5 | Resolve an analyzed incident → Resolution card appears at once, analysis still shown | ✅ |
+| G6 | Compass: newest incident has an `analysis` subdocument | ✅ |

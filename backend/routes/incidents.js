@@ -15,22 +15,31 @@ router.get("/", asyncHandler(async (req, res) => {
 }));
 
 // POST a brand-new incident (simulates an alert firing).
-// This is the main RAG endpoint: embed the new incident, retrieve similar
+// This is the main RAG endpoint: save the incident, embed it, retrieve similar
 // past ones, then ask the LLM to draft a root-cause hypothesis grounded in them.
 router.post("/analyze", asyncHandler(async (req, res) => {
   const { title, service, errorType, description, stackTrace } = req.body;
 
-  // 1. Embed the new incident's description. Without a vector we can't
-  // retrieve or save anything useful, so an outage here fails the request —
-  // as our own 503, never Google's status passed through.
+  // 0. Save first, before any AI call: no Gemini failure can lose the alert
+  const incident = await Incident.create({
+    title, service, errorType, description, stackTrace,
+    status: "open"
+  });
+
+  // 1. Embed the new incident's description, and store the vector at once.
+  // Without a vector we can't retrieve anything, so an outage here fails the
+  // request — as our own 503, never Google's status passed through.
   let newEmbedding;
   try {
     newEmbedding = await getEmbedding(description);
   } catch (err) {
     if (!isUpstreamOutage(err)) throw err; // e.g. invalid key: our bug -> 500
     console.warn("[analyze] embedding unavailable:", err.message);
-    throw httpError(503, "AI service is temporarily unavailable — please try again shortly");
+    // Say it was saved, so the engineer doesn't resubmit and create a duplicate
+    throw httpError(503, "Incident saved, but AI analysis is unavailable right now — please try again shortly");
   }
+  incident.embedding = newEmbedding;
+  await incident.save();
 
   // 2. Retrieve past incidents to compare against
   const pastIncidents = await Incident.find({ status: "resolved" });
@@ -79,16 +88,11 @@ Draft a root-cause hypothesis for the new incident, citing which past incident(s
     aiUnavailable = hypothesis === null;
   }
 
-  // 5. Save the new incident (as "open" — not yet resolved)
-  const newIncident = await Incident.create({
-    title, service, errorType, description, stackTrace,
-    embedding: newEmbedding,
-    status: "open"
-  });
-
-  res.json({
-    incident: newIncident,
+  // 5. Persist the analysis on the incident, so reopening it later shows
+  // exactly what was retrieved and hypothesized (not a re-run)
+  incident.analysis = {
     matches: topMatches.map((m) => ({
+      incidentId: m.incident._id,
       title: m.incident.title,
       service: m.incident.service,
       rootCause: m.incident.rootCause,
@@ -97,9 +101,12 @@ Draft a root-cause hypothesis for the new incident, citing which past incident(s
       createdAt: m.incident.createdAt
     })),
     hypothesis,
-    aiUnavailable,
-    confidence
-  });
+    confidence,
+    aiUnavailable
+  };
+  await incident.save();
+
+  res.status(201).json(incident);
 }));
 
 // PATCH to mark an incident resolved (closes the feedback loop — future

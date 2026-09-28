@@ -29,7 +29,13 @@ export function rankIncidents(newEmbedding, newService, pastIncidents) {
   const now = Date.now();
   const DAY = 1000 * 60 * 60 * 24;
 
-  const scored = pastIncidents.map((incident) => {
+  // Skip incidents with no vector (saved while embedding was down) or one from
+  // a different model: cosine would be NaN, and NaN breaks the sort below.
+  const comparable = pastIncidents.filter(
+    (incident) => incident.embedding?.length === newEmbedding.length
+  );
+
+  const scored = comparable.map((incident) => {
     const similarity = cosineSimilarity(newEmbedding, incident.embedding);
 
     // Same service gets a boost — a payments bug is more relevant to another

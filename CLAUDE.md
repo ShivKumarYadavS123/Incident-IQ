@@ -33,7 +33,8 @@ cd frontend && npm install && npm run dev
   score = 0.7*cosine + 0.15 (same service) + 0.15*exp(-ageDays/180); top 5
 - `backend/routes/incidents.js`
   - `GET /` list incidents
-  - `POST /analyze` embed -> rank resolved -> floor similarity > 0.55 -> Gemini hypothesis (cite past incidents) -> save as open
+  - `POST /analyze` save as open -> embed (save vector) -> rank resolved -> floor similarity > 0.55 ->
+    Gemini hypothesis (cite past incidents) -> save `analysis` on the incident -> 201 + incident
     confidence: >0.8 high, >0.65 medium, else low
   - `PATCH /:id/resolve` save rootCause + resolution, status=resolved (feedback loop)
 - `backend/seed/` — seed script + 15 incidents JSON
@@ -106,7 +107,9 @@ cd frontend && npm install && npm run dev
   inline errors, `ErrorBoundary` around App and IncidentDetail
 - #19 done (F2 happy path pending until Gemini recovers): retry/backoff on 429/503, 15s timeout, model fallback list,
   all-fail -> incident saved + `aiUnavailable: true`; embedding outage -> our own 503 (errorHandler exposes 4xx + 503)
-- Next: #4 save-before-LLM (embedding failure still loses the incident), #5 persist analysis, #13 confidence
+- #4/#5 done (G1–G6 passed): save before any AI call, `analysis` subdoc persisted
+  (snapshot matches), `POST /analyze` returns 201 + incident; #13 fixed; #16 length guard in rankIncidents
+- Next: #2 strip embeddings, zod validation (A5), `POST /:id/analyze` re-run for unanalyzed incidents
 
 ## NOTE
 -"Never push or commit without asking me."
