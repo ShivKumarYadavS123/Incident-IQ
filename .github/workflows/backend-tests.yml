@@ -1,0 +1,38 @@
+name: Backend tests
+
+on: push
+
+# Least privilege: this job only reads the repo. It needs no secrets — Gemini
+# is mocked and MongoDB runs in memory (mongodb-memory-server).
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # Keep the downloaded mongod binary outside node_modules (npm ci wipes it)
+      # so the cache step below can reuse it between runs
+      MONGOMS_DOWNLOAD_DIR: ${{ github.workspace }}/.cache/mongodb-binaries
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      # Restored before npm ci, whose postinstall would otherwise download mongod
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ hashFiles('backend/package-lock.json') }}
+
+      - run: npm ci
+
+      - run: npm test

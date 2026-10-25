@@ -23,11 +23,17 @@ into future retrieval.
 ## Commands
 ```bash
 cd backend && npm install && npm run seed && npm start   # seed = 15 sample incidents
+cd backend && npm test                                   # vitest; npm run test:watch while coding
 cd frontend && npm install && npm run dev
 ```
 
 ## Key files
-- `backend/server.js` — Express app, CORS, JSON, mounts `/api/incidents`, connects Mongo then listens
+- `backend/app.js` — Express app: CORS, JSON, mounts `/api/incidents`, notFound + errorHandler. No DB, no port
+- `backend/server.js` — dotenv, connects Mongo, then `app.listen`
+- `backend/tests/` — vitest + supertest against `app.js`; `setup/` = in-memory MongoDB (one DB per test file,
+  wiped between tests) + **fake Gemini SDK in every test file** (real SDK error classes, so our retry/fallback
+  code runs for real). Drive it with `tests/helpers/fakeGemini.js` + `geminiErrors.js`. Fake env in `vitest.config.js`
+- `.github/workflows/backend-tests.yml` — `npm test` on every push (no secrets needed)
 - `backend/models/Incident.js` — schema: title, service, errorType, description, stackTrace, rootCause, resolution, status(open|resolved), embedding[Number], createdAt
 - `backend/utils/embed.js` — `getEmbedding()`, `cosineSimilarity()`, `rankIncidents()`
   score = 0.7*cosine + 0.15 (same service) + 0.15*exp(-ageDays/180); top 5
@@ -85,6 +91,9 @@ cd frontend && npm install && npm run dev
     pre-#4 analysis stay that way forever. Need `POST /:id/analyze` (embed if no vector, rank, hypothesize,
     overwrite `analysis`) + a "Retry AI analysis" button in IncidentDetail. Must **exclude the incident
     itself** from matches (once it has a vector and is resolved it would match itself at ~100%)
+21. `npm audit` (found 2026-10-25): 4 vulns in Express 4.22.2's own deps — `proxy-addr` (critical, IP spoofing
+    via trusted subnets; we don't set `trust proxy` yet, but deploy will), `body-parser` (high, DoS), `qs` (moderate).
+    Not from the test tools. Fix in its own commit (`npm audit fix`, then `npm test`)
 
 ## v2 roadmap
 - **2.0 Hardening:** error contract (asyncHandler/notFound/errorHandler, PATCH 404), res.ok handling +
@@ -104,7 +113,7 @@ cd frontend && npm install && npm run dev
   streaming hypothesis, toasts/skeletons, correct confidence for past incidents
 - **2.4 Webhooks:** ingestion endpoint with HMAC signature + idempotency, API keys (built on 2.2 auth),
   dedupe duplicate open alerts
-- **2.5 Ship:** tests (vitest + supertest + mongodb-memory-server), GitHub Actions CI, Docker, deploy,
+- **2.5 Ship:** more tests (backend setup + CI already done in 2.0 — add frontend tests, coverage), Docker, deploy,
   pino logging, README fixes + architecture diagram + demo GIF
 
 ## Status
@@ -117,7 +126,11 @@ cd frontend && npm install && npm run dev
   all-fail -> incident saved + `aiUnavailable: true`; embedding outage -> our own 503 (errorHandler exposes 4xx + 503)
 - #4/#5 done (G1–G6 passed): save before any AI call, `analysis` subdoc persisted
   (snapshot matches), `POST /analyze` returns 201 + incident; #13 fixed; #16 length guard in rankIncidents
-- Next: #2 strip embeddings (developer is doing this one themselves), then zod validation (A5), #20 re-run analysis
+- Test setup done (T1–T5 passed): vitest 5 + supertest + mongodb-memory-server, Gemini mocked; 17 tests (error contract,
+  save-before-AI, degrade, fallback, retrieval rules), each verified to fail when its behaviour is broken; CI on push.
+  `server.js` split into `app.js` + `server.js`. **Every change from here ships with tests.**
+- Next (agreed order): #2 strip embeddings (developer's own change — review + tests), zod validation (A5) + #12,
+  #17 (+ boot check, `/health`), #11, helmet/CORS/rate limit, #20, #15, #9, #18, #21 → tag v2.0.0
 
 ## NOTE
 -"Never push or commit without asking me."

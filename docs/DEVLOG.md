@@ -198,3 +198,72 @@ Committed as `8c9eb92`.
 | G4 | Click a resolved seed incident → Resolution card, no "LOW CONFIDENCE" badge (#13) | ✅ |
 | G5 | Resolve an analyzed incident → Resolution card appears at once, analysis still shown | ✅ |
 | G6 | Compass: newest incident has an `analysis` subdocument | ✅ |
+
+Committed as `3a87d0b`.
+
+---
+
+## Day 4 — 2026-10-25
+
+### What was built — backend test setup + CI
+- **`app.js` / `server.js` split:** importing `server.js` connected to the real MongoDB and bound port 5000,
+  so tests couldn't load the app without side effects. `app.js` builds + exports the Express app;
+  `server.js` = dotenv + `mongoose.connect` + `app.listen`. No behaviour change.
+- **Tooling (dev deps):** vitest 5, supertest 7 (HTTP requests against `app` without a port),
+  mongodb-memory-server 11 (real `mongod` 8.2 binary, throwaway data). `npm test` / `npm run test:watch`.
+- **`tests/setup/`:**
+  - `globalSetup.js`: one in-memory mongod per run; URI handed to workers with `project.provide` / `inject`.
+  - `db.js`: each test file gets its own database (files run in parallel), wiped after every test.
+    Sets `MONGODB_URI` to the in-memory server before the app is imported — tests can't reach the real DB.
+  - `fakeGemini.js`: `vi.mock("@google/generative-ai")` in a **setup file**, so it applies to every test file —
+    no test can ever call Google. Only the client class is faked; the SDK's **real error classes** stay, so
+    `withRetry`, model fallback and `isUpstreamOutage` run for real. Tests drive it via
+    `tests/helpers/fakeGemini.js` (`embedContent`/`generateContent` are `vi.fn`s called with `(input, modelName)`)
+    and build realistic SDK errors with `tests/helpers/geminiErrors.js`.
+- **Hermetic env:** `vitest.config.js` sets fake `GEMINI_API_KEY` + model names. `dotenv` never overrides a
+  variable that's already set, so the local key / model list can't leak into a run → same result locally and in CI.
+- **CI:** `.github/workflows/backend-tests.yml` — every push: Ubuntu, Node 24, `npm ci`, `npm test`.
+  `permissions: contents: read`, no secrets. mongod binary cached via `MONGOMS_DOWNLOAD_DIR` (outside
+  `node_modules`, which `npm ci` wipes; the var isn't `~`-expanded, so it's an absolute path).
+
+### Tests (17)
+- `errors.test.js` — HTTP contract: 400 Invalid id · 404 Incident not found · 404 Not found (URL not echoed) ·
+  400 Invalid JSON (no Gemini call) · SDK 400/404 → exact `{"error":"Internal server error"}`, logged server-side,
+  1 call · SDK 429/503 → 3 attempts → our 503 · timeout → our 503, 1 call.
+- `analyze.test.js` — DB state: happy path (embed with configured model, grounded prompt, vector + analysis
+  persisted, confidence high) · save-before-AI (outage → 1 open incident, `embedding: []`, no `analysis` key,
+  no gen call; bad key → 500 but incident kept) · degrade (all models fail → 201, matches, `hypothesis: null`,
+  `aiUnavailable`, both models tried) · 404 falls through to model B · no similar match → no LLM call ·
+  only resolved incidents retrieved · mismatched vectors skipped, rest still ranked (#16).
+- Test vectors are 3-D (`[1,0,0]`): cosine only cares about direction, so expected similarities are exactly 1 or 0.
+
+### Verified
+- **17/17 pass**, ~7–13s locally (most of it: the 429/503 tests use the real ~0.5s+1s backoff — kept on purpose,
+  fake timers + mongoose + supertest are brittle).
+- **Mutation checks** — broke the code on purpose, confirmed the right tests go red, restored:
+
+| # | Deliberate bug | Failing tests |
+|---|---|---|
+| M1 | errorHandler stops exposing 503 | 4 (all our-503 cases) |
+| M2 | errorHandler trusts any `err.status` (the Day-1 upstream leak) | 3 (SDK 400/404 → 500) |
+| M3 | timeouts no longer count as outage | 2 |
+| M4 | no model fallback | 2 (degrade + 404 fall-through) |
+| M5 | incident deleted on embedding outage (pre-#4) | 1 (save-before-AI) |
+| M6 | retrieve open incidents too | 5 — the new alert matches **itself** at similarity 1 (confirms the #20 warning) |
+
+- Suite also passes against the **committed** `Incident.js` / `incidents.js` (scratch copy) → doesn't depend on the
+  uncommitted #2 work. Server still boots via `app.js` (smoke test on port 5055: `GET /api/incidents` 200).
+
+### Findings
+- **`npm audit`: 4 vulns in Express 4.22.2's own deps** (`proxy-addr` critical, `body-parser` high, `qs` moderate) —
+  pre-existing, not from the test tools. Logged as **#21**, fix in its own commit.
+
+### Manual test checklist — test setup
+| # | Test | Result |
+|---|---|---|
+| T1 | `cd backend && npm test` → 2 files, 17 passed | ✅ |
+| T2 | Remove `\|\| err.status === 503` in `middleware/errors.js` → 4 tests fail; undo → green | ✅ |
+| T3 | `npm run test:watch`, save a test file → re-runs; `q` quits | ✅ |
+| T4 | `npm start` + frontend: trigger an alert, resolve it → works exactly as before the split | ✅ |
+| T5 | Compass after `npm test`: no `test-…` databases, incident count unchanged | ✅ |
+| T6 | After you push: GitHub → Actions → "Backend tests" green | ⏳ |
